@@ -22,8 +22,6 @@ smartsort() {
   local temp_state_meta="$state_meta.tmp"
   local -a selected_extensions=()
 
-  OPTIND=1
-
   usage() {
     cbc_style_box "$CATPPUCCIN_MAUVE" "Description:" \
       "  Organises files in the current directory according to the mode you choose." \
@@ -34,19 +32,19 @@ smartsort() {
       "    - size  : Group by file size buckets (customisable thresholds)."
 
     cbc_style_box "$CATPPUCCIN_BLUE" "Usage:" \
-      "  smartsort [-h] [-m mode] [-d directory]" \
+      "  smartsort [mode] [-d directory]" \
       "  smartsort undo"
 
     cbc_style_box "$CATPPUCCIN_TEAL" "Options:" \
       "  -h            Display this help message." \
-      "  -m mode       Specify the sorting mode directly (ext|alpha|time|size)." \
       "  -d directory  Destination root for sorted folders (defaults to current directory)." \
+      "  mode          Sorting mode positional argument (ext|alpha|time|size)." \
       "  undo          Undo the most recent sorting run in this directory."
 
     cbc_style_box "$CATPPUCCIN_PEACH" "Examples:" \
       "  smartsort" \
-      "  smartsort -m ext -d ./sorted" \
-      "  smartsort -m size" \
+      "  smartsort ext" \
+      "  smartsort time -d ./sorted" \
       "  smartsort undo"
   }
 
@@ -567,43 +565,57 @@ smartsort() {
     return 1
   }
 
-  while getopts ":hm:d:" opt; do
-    case $opt in
-    h)
+  local undo_requested=0
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+    -h)
       usage
       return 0
       ;;
-    m)
-      mode="$OPTARG"
+    -d)
+      if [ "$#" -lt 2 ]; then
+        cbc_style_message "$CATPPUCCIN_RED" "Option -d requires an argument."
+        return 1
+      fi
+      target_dir="$2"
+      shift 2
+      continue
       ;;
-    d)
-      target_dir="$OPTARG"
+    undo)
+      if [ "$undo_requested" -eq 1 ]; then
+        cbc_style_message "$CATPPUCCIN_RED" "The undo command was provided more than once."
+        return 1
+      fi
+      undo_requested=1
       ;;
-    \?)
-      cbc_style_message "$CATPPUCCIN_RED" "Invalid option: -$OPTARG"
+    ext | alpha | time | size)
+      if [ -n "$mode" ]; then
+        cbc_style_message "$CATPPUCCIN_RED" "Multiple sorting modes provided: $mode and $1"
+        return 1
+      fi
+      mode="$1"
+      ;;
+    -*)
+      cbc_style_message "$CATPPUCCIN_RED" "Invalid option: $1"
       return 1
       ;;
-    :)
-      cbc_style_message "$CATPPUCCIN_RED" "Option -$OPTARG requires an argument."
+    *)
+      cbc_style_message "$CATPPUCCIN_RED" "Unknown argument: $1"
       return 1
       ;;
     esac
-  done
 
-  shift $((OPTIND - 1))
+    shift
+  done
 
   if [ -z "$target_dir" ]; then
     target_dir="."
   fi
 
-  if [ "${1:-}" = "undo" ]; then
-    if [ "$#" -ne 1 ]; then
-      cbc_style_message "$CATPPUCCIN_RED" "The undo command does not accept additional arguments."
-      return 1
-    fi
-
+  if [ "$undo_requested" -eq 1 ]; then
     if [ -n "$mode" ] || [ "$target_dir" != "." ]; then
-      cbc_style_message "$CATPPUCCIN_RED" "The undo command cannot be combined with -m or -d."
+      cbc_style_message "$CATPPUCCIN_RED" "The undo command cannot be combined with mode or -d."
       return 1
     fi
 
@@ -611,12 +623,7 @@ smartsort() {
     return $?
   fi
 
-  if [ "$#" -gt 0 ]; then
-    cbc_style_message "$CATPPUCCIN_RED" "Unknown argument: $1"
-    return 1
-  fi
-
-  if [ "$#" -eq 0 ] && [ -z "$mode" ] && [ "$target_dir" = "." ]; then
+  if [ -z "$mode" ] && [ "$target_dir" = "." ]; then
     mode=$(smartsort_select_mode)
   fi
 
