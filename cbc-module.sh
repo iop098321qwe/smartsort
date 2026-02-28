@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
 
 smartsort() {
-  local mode=""            # Sorting mode (ext, alpha, time, size, type)
+  local mode=""            # Sorting mode (ext, alpha, time, size)
   local interactive_mode=0 # Flag for interactive refinements
   local target_dir="."     # Destination directory for sorted folders
   local first_letter=""
   local file=""
   local time_grouping="month"
-  local type_granularity="top-level"
   local small_threshold_bytes=1048576   # 1MB default
   local medium_threshold_bytes=10485760 # 10MB default
   local summary_details=""
@@ -33,8 +32,7 @@ smartsort() {
       "    - ext   : Group by file extension (supports multi-selection)." \
       "    - alpha : Group by the first character of the filename." \
       "    - time  : Group by modification time (year, month, or day)." \
-      "    - size  : Group by file size buckets (customisable thresholds)." \
-      "    - type  : Group by MIME type (top-level or full type)."
+      "    - size  : Group by file size buckets (customisable thresholds)."
 
     cbc_style_box "$CATPPUCCIN_BLUE" "Usage:" \
       "  smartsort [-h] [-i] [-m mode] [-d directory]" \
@@ -43,13 +41,13 @@ smartsort() {
     cbc_style_box "$CATPPUCCIN_TEAL" "Options:" \
       "  -h            Display this help message." \
       "  -i            Enable interactive prompts for advanced configuration." \
-      "  -m mode       Specify the sorting mode directly (ext|alpha|time|size|type)." \
+      "  -m mode       Specify the sorting mode directly (ext|alpha|time|size)." \
       "  -d directory  Destination root for sorted folders (defaults to current directory)." \
       "  undo          Undo the most recent sorting run in this directory."
 
     cbc_style_box "$CATPPUCCIN_PEACH" "Examples:" \
       "  smartsort -i" \
-      "  smartsort -m type -d ./sorted" \
+      "  smartsort -m ext -d ./sorted" \
       "  smartsort -i -m size" \
       "  smartsort undo"
   }
@@ -57,14 +55,14 @@ smartsort() {
   smartsort_select_mode() {
     local selection=""
     if command -v fzf >/dev/null 2>&1; then
-      selection=$(printf "ext\nalpha\ntime\nsize\ntype\n" |
+      selection=$(printf "ext\nalpha\ntime\nsize\n" |
         fzf --prompt="Select sorting mode: " --header="Choose how to organise files")
     elif [ "$CBC_HAS_GUM" -eq 1 ]; then
       selection=$(gum choose --cursor.foreground "$CATPPUCCIN_GREEN" \
         --selected.foreground "$CATPPUCCIN_GREEN" \
-        --header "Select how to organise files" ext alpha time size type)
+        --header "Select how to organise files" ext alpha time size)
     else
-      cbc_style_message "$CATPPUCCIN_SUBTEXT" "Enter sorting mode (ext/alpha/time/size/type):"
+      cbc_style_message "$CATPPUCCIN_SUBTEXT" "Enter sorting mode (ext/alpha/time/size):"
       read -r selection
     fi
     printf '%s' "$selection"
@@ -236,30 +234,6 @@ smartsort() {
       small_threshold_bytes=1048576
       medium_threshold_bytes=10485760
     fi
-  }
-
-  smartsort_prompt_type_granularity() {
-    local selection=""
-    if command -v fzf >/dev/null 2>&1; then
-      selection=$(printf "top-level\nfull\n" |
-        fzf --prompt="Select MIME grouping: " --header="Choose MIME granularity")
-    elif [ "$CBC_HAS_GUM" -eq 1 ]; then
-      selection=$(gum choose --cursor.foreground "$CATPPUCCIN_GREEN" \
-        --selected.foreground "$CATPPUCCIN_GREEN" \
-        --header "Choose MIME granularity" "top-level" full)
-    else
-      cbc_style_message "$CATPPUCCIN_SUBTEXT" "Group by MIME (top-level/full):"
-      read -r selection
-    fi
-
-    case "$selection" in
-    full) type_granularity="full" ;;
-    top-level | "") type_granularity="top-level" ;;
-    *)
-      cbc_style_message "$CATPPUCCIN_YELLOW" "Unknown selection '$selection'. Using top-level grouping."
-      type_granularity="top-level"
-      ;;
-    esac
   }
 
   smartsort_read_meta_value() {
@@ -666,7 +640,7 @@ smartsort() {
   fi
 
   case "$mode" in
-  ext | alpha | time | size | type) ;;
+  ext | alpha | time | size) ;;
   *)
     cbc_style_message "$CATPPUCCIN_RED" "Invalid sorting mode: $mode"
     return 1
@@ -703,10 +677,6 @@ smartsort() {
     smartsort_prompt_size_thresholds
   fi
 
-  if [ "$mode" = "type" ] && [ "$interactive_mode" -eq 1 ]; then
-    smartsort_prompt_type_granularity
-  fi
-
   case "$mode" in
   ext)
     if [ "${#selected_extensions[@]}" -gt 0 ]; then
@@ -720,9 +690,6 @@ smartsort() {
     ;;
   size)
     summary_details="Size buckets (MB): small≤$((small_threshold_bytes / 1024 / 1024)), medium≤$((medium_threshold_bytes / 1024 / 1024)), large>medium"
-    ;;
-  type)
-    summary_details="MIME grouping: $type_granularity"
     ;;
   *)
     summary_details=""
@@ -901,48 +868,12 @@ smartsort() {
     cbc_style_message "$CATPPUCCIN_GREEN" "Files have been sorted into size-based directories."
   }
 
-  sort_by_type() {
-    if ! command -v file >/dev/null 2>&1; then
-      cbc_style_message "$CATPPUCCIN_RED" "The 'file' command is required for type sorting."
-      return 1
-    fi
-
-    cbc_style_message "$CATPPUCCIN_BLUE" "Sorting files by MIME type..."
-    local operation_failed=0
-
-    while IFS= read -r path; do
-      [ -f "$path" ] || continue
-      local mime category target_subdir
-      mime=$(file --brief --mime-type "$path")
-      if [ "$type_granularity" = "full" ]; then
-        category=${mime//\//_}
-      else
-        category=${mime%%/*}
-      fi
-      if [ -z "$category" ]; then
-        category="unknown"
-      fi
-      target_subdir="$target_dir/$category"
-      if ! smartsort_move_file "$path" "$target_subdir"; then
-        operation_failed=1
-      fi
-    done < <(find . -maxdepth 1 -type f -print)
-
-    if [ "$operation_failed" -ne 0 ]; then
-      cbc_style_message "$CATPPUCCIN_RED" "Some files could not be sorted by MIME type."
-      return 1
-    fi
-
-    cbc_style_message "$CATPPUCCIN_GREEN" "Files have been sorted into MIME type directories."
-  }
-
   local sorting_status=0
   case "$mode" in
   ext) sort_by_extension || sorting_status=1 ;;
   alpha) sort_by_alpha || sorting_status=1 ;;
   time) sort_by_time || sorting_status=1 ;;
   size) sort_by_size || sorting_status=1 ;;
-  type) sort_by_type || sorting_status=1 ;;
   esac
 
   if [ "$sorting_status" -ne 0 ]; then
