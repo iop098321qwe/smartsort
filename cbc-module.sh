@@ -54,17 +54,27 @@ smartsort() {
 
   smartsort_select_mode() {
     local selection=""
-    if command -v fzf >/dev/null 2>&1; then
+    if [ "$CBC_HAS_GUM" -eq 1 ]; then
+      if selection=$(gum choose --selected=ext \
+        --cursor.foreground "$CATPPUCCIN_GREEN" \
+        --selected.foreground "$CATPPUCCIN_GREEN" \
+        --header "Select how to organise files" ext alpha time size); then
+        :
+      else
+        selection=""
+      fi
+    elif command -v fzf >/dev/null 2>&1; then
       selection=$(printf "ext\nalpha\ntime\nsize\n" |
         fzf --prompt="Select sorting mode: " --header="Choose how to organise files")
-    elif [ "$CBC_HAS_GUM" -eq 1 ]; then
-      selection=$(gum choose --cursor.foreground "$CATPPUCCIN_GREEN" \
-        --selected.foreground "$CATPPUCCIN_GREEN" \
-        --header "Select how to organise files" ext alpha time size)
     else
       cbc_style_message "$CATPPUCCIN_SUBTEXT" "Enter sorting mode (ext/alpha/time/size):"
       read -r selection
     fi
+
+    if [ -z "$selection" ]; then
+      selection="ext"
+    fi
+
     printf '%s' "$selection"
   }
 
@@ -617,6 +627,10 @@ smartsort() {
   if [ "$#" -gt 0 ]; then
     cbc_style_message "$CATPPUCCIN_RED" "Unknown argument: $1"
     return 1
+  fi
+
+  if [ "$#" -eq 0 ] && [ "$interactive_mode" -eq 0 ] && [ -z "$mode" ] && [ "$target_dir" = "." ]; then
+    mode=$(smartsort_select_mode)
   fi
 
   if [ "$interactive_mode" -eq 1 ]; then
