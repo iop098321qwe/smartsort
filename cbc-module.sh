@@ -231,6 +231,9 @@ smartsort() {
     sqlite | sqlite3 | db | db3 | parquet | avro | orc | feather | arrow | h5 | hdf5 | npy | npz | pkl | joblib | mat | sav | dta)
       printf 'data'
       ;;
+    iso | img | dmg | vhd | vhdx | vmdk | vdi | qcow | qcow2 | ova | ovf | nrg)
+      printf 'disk-images'
+      ;;
     *)
       printf 'other'
       ;;
