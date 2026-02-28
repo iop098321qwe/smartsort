@@ -216,6 +216,9 @@ smartsort() {
     mp3 | wav | flac | aac | m4a | ogg | oga | opus | wma | aiff | aif | alac | amr | mid | midi | mka)
       printf 'audio'
       ;;
+    mp4 | m4v | mov | mkv | avi | webm | mpg | mpeg | m2ts | mts | ts | 3gp | 3g2 | flv | wmv | ogv)
+      printf 'video'
+      ;;
     *)
       printf 'other'
       ;;
