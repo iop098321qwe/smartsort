@@ -13,13 +13,15 @@ smartsort() {
   local run_timestamp=""
   local move_count=0
   local absolute_target=""
-  local state_dir=".smartsort"
-  local state_manifest="$state_dir/last-run.moves"
-  local state_dirs_manifest="$state_dir/last-run.dirs"
-  local state_meta="$state_dir/last-run.meta"
-  local temp_state_manifest="$state_manifest.tmp"
-  local temp_state_dirs_manifest="$state_dirs_manifest.tmp"
-  local temp_state_meta="$state_meta.tmp"
+  local state_root=""
+  local state_dir=""
+  local state_history_limit=10
+  local state_manifest=""
+  local state_dirs_manifest=""
+  local state_meta=""
+  local temp_state_manifest=""
+  local temp_state_dirs_manifest=""
+  local temp_state_meta=""
   local -a selected_extensions=()
 
   usage() {
@@ -40,7 +42,7 @@ smartsort() {
       "  -h            Display this help message." \
       "  -d directory  Destination root for sorted folders (defaults to current directory)." \
       "  mode          Sorting mode positional argument (ext|alpha|time|size|kind)." \
-      "  undo          Undo the most recent sorting run in this directory."
+      "  undo          Undo the most recent sort run (up to $state_history_limit levels)."
 
     cbc_style_box "$CATPPUCCIN_PEACH" "Examples:" \
       "  smartsort" \
@@ -318,6 +320,144 @@ smartsort() {
     return 1
   }
 
+  smartsort_hash_source_dir() {
+    local source_path="$1"
+    local digest=""
+    local hash=""
+
+    if command -v sha256sum >/dev/null 2>&1; then
+      digest=$(printf '%s' "$source_path" | sha256sum 2>/dev/null)
+      hash=${digest%% *}
+    elif command -v shasum >/dev/null 2>&1; then
+      digest=$(printf '%s' "$source_path" | shasum -a 256 2>/dev/null)
+      hash=${digest%% *}
+    elif command -v md5sum >/dev/null 2>&1; then
+      digest=$(printf '%s' "$source_path" | md5sum 2>/dev/null)
+      hash=${digest%% *}
+    elif command -v md5 >/dev/null 2>&1; then
+      hash=$(printf '%s' "$source_path" | md5 -q 2>/dev/null)
+    elif command -v cksum >/dev/null 2>&1; then
+      digest=$(printf '%s' "$source_path" | cksum 2>/dev/null)
+      hash=${digest%% *}
+    else
+      return 1
+    fi
+
+    if [ -z "$hash" ]; then
+      return 1
+    fi
+
+    printf '%s' "$hash"
+    return 0
+  }
+
+  smartsort_state_slot_file() {
+    local slot="$1"
+    local suffix="$2"
+
+    printf '%s/run-%s.%s' "$state_dir" "$slot" "$suffix"
+  }
+
+  smartsort_set_active_state_slot() {
+    local slot="$1"
+
+    state_manifest=$(smartsort_state_slot_file "$slot" "moves")
+    state_dirs_manifest=$(smartsort_state_slot_file "$slot" "dirs")
+    state_meta=$(smartsort_state_slot_file "$slot" "meta")
+    temp_state_manifest="$state_manifest.tmp"
+    temp_state_dirs_manifest="$state_dirs_manifest.tmp"
+    temp_state_meta="$state_meta.tmp"
+  }
+
+  smartsort_configure_state_paths() {
+    local source_path="$1"
+    local state_key=""
+
+    if [ -n "$SMARTSORT_STATE_DIR" ]; then
+      state_root="$SMARTSORT_STATE_DIR"
+    elif [ -n "$XDG_STATE_HOME" ]; then
+      state_root="$XDG_STATE_HOME/smartsort"
+    else
+      state_root="$HOME/.local/state/smartsort"
+    fi
+
+    if ! state_key=$(smartsort_hash_source_dir "$source_path"); then
+      cbc_style_message "$CATPPUCCIN_RED" "Failed to derive a state key for: $source_path"
+      return 1
+    fi
+
+    state_dir="$state_root/$state_key"
+    smartsort_set_active_state_slot 1
+    return 0
+  }
+
+  smartsort_clear_state_slot() {
+    local slot="$1"
+    local moves_path dirs_path meta_path
+
+    moves_path=$(smartsort_state_slot_file "$slot" "moves")
+    dirs_path=$(smartsort_state_slot_file "$slot" "dirs")
+    meta_path=$(smartsort_state_slot_file "$slot" "meta")
+
+    rm -f "$moves_path" "$dirs_path" "$meta_path"
+  }
+
+  smartsort_move_state_slot() {
+    local from_slot="$1"
+    local to_slot="$2"
+    local suffix from_path to_path
+
+    for suffix in moves dirs meta; do
+      from_path=$(smartsort_state_slot_file "$from_slot" "$suffix")
+      to_path=$(smartsort_state_slot_file "$to_slot" "$suffix")
+
+      if [ -f "$from_path" ]; then
+        if ! mv "$from_path" "$to_path"; then
+          cbc_style_message "$CATPPUCCIN_RED" "Failed to rotate undo snapshot run-$from_slot to run-$to_slot."
+          return 1
+        fi
+      else
+        rm -f "$to_path"
+      fi
+    done
+
+    return 0
+  }
+
+  smartsort_rotate_state_history_for_new_run() {
+    local slot
+
+    if ! smartsort_clear_state_slot "$state_history_limit"; then
+      cbc_style_message "$CATPPUCCIN_RED" "Failed to clear oldest undo snapshot."
+      return 1
+    fi
+
+    for ((slot = state_history_limit - 1; slot >= 1; slot--)); do
+      if ! smartsort_move_state_slot "$slot" "$((slot + 1))"; then
+        return 1
+      fi
+    done
+
+    return 0
+  }
+
+  smartsort_promote_state_history_after_undo() {
+    local slot
+
+    if ! smartsort_clear_state_slot 1; then
+      cbc_style_message "$CATPPUCCIN_RED" "Failed to clear consumed undo snapshot."
+      return 1
+    fi
+
+    for ((slot = 2; slot <= state_history_limit; slot++)); do
+      if ! smartsort_move_state_slot "$slot" "$((slot - 1))"; then
+        return 1
+      fi
+    done
+
+    return 0
+  }
+
   smartsort_discard_temp_state() {
     rm -f "$temp_state_manifest" "$temp_state_dirs_manifest" "$temp_state_meta"
   }
@@ -326,6 +466,10 @@ smartsort() {
     source_dir=$(pwd -P)
     run_timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date +"%Y-%m-%dT%H:%M:%S%z")
     move_count=0
+
+    if ! smartsort_configure_state_paths "$source_dir"; then
+      return 1
+    fi
 
     if ! mkdir -p "$state_dir"; then
       cbc_style_message "$CATPPUCCIN_RED" "Failed to create smartsort state directory: $state_dir"
@@ -466,6 +610,11 @@ smartsort() {
       return 1
     fi
 
+    if ! smartsort_rotate_state_history_for_new_run; then
+      cbc_style_message "$CATPPUCCIN_RED" "Failed to rotate undo history."
+      return 1
+    fi
+
     if ! mv "$temp_state_manifest" "$state_manifest"; then
       cbc_style_message "$CATPPUCCIN_RED" "Failed to save undo move manifest."
       return 1
@@ -490,12 +639,17 @@ smartsort() {
     local -a move_manifest=()
     local -a created_dirs_manifest=()
 
+    current_dir=$(pwd -P)
+
+    if ! smartsort_configure_state_paths "$current_dir"; then
+      return 1
+    fi
+
     if [ ! -f "$state_manifest" ] || [ ! -f "$state_meta" ]; then
       cbc_style_message "$CATPPUCCIN_YELLOW" "No sorting operation is available to undo in this directory."
       return 0
     fi
 
-    current_dir=$(pwd -P)
     recorded_source_dir=$(smartsort_read_meta_value "source_dir" "$state_meta" 2>/dev/null || true)
     recorded_mode=$(smartsort_read_meta_value "mode" "$state_meta" 2>/dev/null || true)
     recorded_target_dir=$(smartsort_read_meta_value "target_dir" "$state_meta" 2>/dev/null || true)
@@ -517,6 +671,7 @@ smartsort() {
     undo_summary+=("  Target Directory: ${recorded_target_dir:-unknown}")
     undo_summary+=("  Timestamp       : ${recorded_timestamp:-unknown}")
     undo_summary+=("  Files to Restore: ${recorded_move_count:-unknown}")
+    undo_summary+=("  Undo Depth      : newest of up to $state_history_limit")
 
     cbc_style_box "$CATPPUCCIN_LAVENDER" "Undo Preview:" "${undo_summary[@]}"
 
@@ -621,7 +776,11 @@ smartsort() {
     cbc_style_message "$CATPPUCCIN_GREEN" "Undo removed $cleaned_dir_count directory(s)."
 
     if [ "$restore_failures" -eq 0 ] && [ "$cleanup_failures" -eq 0 ]; then
-      rm -f "$state_manifest" "$state_dirs_manifest" "$state_meta"
+      if ! smartsort_promote_state_history_after_undo; then
+        cbc_style_message "$CATPPUCCIN_YELLOW" "Undo restored files, but history rotation failed."
+        return 1
+      fi
+      rmdir "$state_dir" 2>/dev/null || true
       cbc_style_message "$CATPPUCCIN_GREEN" "Undo completed successfully."
       return 0
     fi
@@ -974,5 +1133,5 @@ smartsort() {
   fi
 
   cbc_style_message "$CATPPUCCIN_GREEN" "Sorting operation completed successfully."
-  cbc_style_message "$CATPPUCCIN_SUBTEXT" "You can revert this run with: smartsort undo"
+  cbc_style_message "$CATPPUCCIN_SUBTEXT" "You can revert recent runs with: smartsort undo (up to $state_history_limit levels)"
 }
