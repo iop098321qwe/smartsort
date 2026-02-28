@@ -15,7 +15,7 @@ smartsort() {
   local absolute_target=""
   local state_root=""
   local state_dir=""
-  local state_history_limit=3
+  local state_history_limit=10
   local state_manifest=""
   local state_dirs_manifest=""
   local state_meta=""
@@ -42,7 +42,7 @@ smartsort() {
       "  -h            Display this help message." \
       "  -d directory  Destination root for sorted folders (defaults to current directory)." \
       "  mode          Sorting mode positional argument (ext|alpha|time|size|kind)." \
-      "  undo          Undo the most recent sort run (up to 3 levels)."
+      "  undo          Undo the most recent sort run (up to $state_history_limit levels)."
 
     cbc_style_box "$CATPPUCCIN_PEACH" "Examples:" \
       "  smartsort" \
@@ -1133,5 +1133,5 @@ smartsort() {
   fi
 
   cbc_style_message "$CATPPUCCIN_GREEN" "Sorting operation completed successfully."
-  cbc_style_message "$CATPPUCCIN_SUBTEXT" "You can revert recent runs with: smartsort undo (up to 3 levels)"
+  cbc_style_message "$CATPPUCCIN_SUBTEXT" "You can revert recent runs with: smartsort undo (up to $state_history_limit levels)"
 }
