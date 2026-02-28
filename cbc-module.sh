@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 smartsort() {
-  local mode=""            # Sorting mode (ext, alpha, time, size)
+  local mode=""            # Sorting mode (ext, alpha, time, size, kind)
   local target_dir="."     # Destination directory for sorted folders
   local first_letter=""
   local file=""
@@ -29,7 +29,8 @@ smartsort() {
       "    - ext   : Group by file extension (supports multi-selection)." \
       "    - alpha : Group by the first character of the filename." \
       "    - time  : Group by modification time (year, month, or day)." \
-      "    - size  : Group by file size buckets (customisable thresholds)."
+      "    - size  : Group by file size buckets (customisable thresholds)." \
+      "    - kind  : Group by semantic file kind (documents + other)."
 
     cbc_style_box "$CATPPUCCIN_BLUE" "Usage:" \
       "  smartsort [mode] [-d directory]" \
@@ -38,12 +39,13 @@ smartsort() {
     cbc_style_box "$CATPPUCCIN_TEAL" "Options:" \
       "  -h            Display this help message." \
       "  -d directory  Destination root for sorted folders (defaults to current directory)." \
-      "  mode          Sorting mode positional argument (ext|alpha|time|size)." \
+      "  mode          Sorting mode positional argument (ext|alpha|time|size|kind)." \
       "  undo          Undo the most recent sorting run in this directory."
 
     cbc_style_box "$CATPPUCCIN_PEACH" "Examples:" \
       "  smartsort" \
       "  smartsort ext" \
+      "  smartsort kind" \
       "  smartsort time -d ./sorted" \
       "  smartsort undo"
   }
@@ -54,16 +56,16 @@ smartsort() {
       if selection=$(gum choose --selected=ext \
         --cursor.foreground "$CATPPUCCIN_GREEN" \
         --selected.foreground "$CATPPUCCIN_GREEN" \
-        --header "Select how to organise files" ext alpha time size); then
+        --header "Select how to organise files" ext alpha time size kind); then
         :
       else
         selection=""
       fi
     elif command -v fzf >/dev/null 2>&1; then
-      selection=$(printf "ext\nalpha\ntime\nsize\n" |
+      selection=$(printf "ext\nalpha\ntime\nsize\nkind\n" |
         fzf --prompt="Select sorting mode: " --header="Choose how to organise files")
     else
-      cbc_style_message "$CATPPUCCIN_SUBTEXT" "Enter sorting mode (ext/alpha/time/size):"
+      cbc_style_message "$CATPPUCCIN_SUBTEXT" "Enter sorting mode (ext/alpha/time/size/kind):"
       read -r selection
     fi
 
@@ -174,6 +176,44 @@ smartsort() {
     fi
 
     return 1
+  }
+
+  smartsort_detect_extension() {
+    local path="$1"
+    local base lower_base extension
+
+    base=${path#./}
+    lower_base=$(printf '%s' "$base" | tr '[:upper:]' '[:lower:]')
+
+    case "$lower_base" in
+    *.tar.gz) extension="tar.gz" ;;
+    *.tar.bz2) extension="tar.bz2" ;;
+    *.tar.xz) extension="tar.xz" ;;
+    *.tar.zst) extension="tar.zst" ;;
+    *.*)
+      if [[ "$lower_base" == .* ]]; then
+        extension="no-extension"
+      else
+        extension=${lower_base##*.}
+      fi
+      ;;
+    *) extension="no-extension" ;;
+    esac
+
+    printf '%s' "$extension"
+  }
+
+  smartsort_kind_for_extension() {
+    local extension="$1"
+
+    case "$extension" in
+    txt | md | markdown | rst | adoc | rtf | pdf | djvu | doc | docx | odt | xls | xlsx | ods | ppt | pptx | odp | csv | tsv | tex | log)
+      printf 'documents'
+      ;;
+    *)
+      printf 'other'
+      ;;
+    esac
   }
 
   smartsort_prompt_time_grouping() {
@@ -589,7 +629,7 @@ smartsort() {
       fi
       undo_requested=1
       ;;
-    ext | alpha | time | size)
+    ext | alpha | time | size | kind)
       if [ -n "$mode" ]; then
         cbc_style_message "$CATPPUCCIN_RED" "Multiple sorting modes provided: $mode and $1"
         return 1
@@ -632,7 +672,7 @@ smartsort() {
   fi
 
   case "$mode" in
-  ext | alpha | time | size) ;;
+  ext | alpha | time | size | kind) ;;
   *)
     cbc_style_message "$CATPPUCCIN_RED" "Invalid sorting mode: $mode"
     return 1
@@ -682,6 +722,9 @@ smartsort() {
     ;;
   size)
     summary_details="Size buckets (MB): small≤$((small_threshold_bytes / 1024 / 1024)), medium≤$((medium_threshold_bytes / 1024 / 1024)), large>medium"
+    ;;
+  kind)
+    summary_details="Kind buckets: documents + other"
     ;;
   *)
     summary_details=""
@@ -859,12 +902,36 @@ smartsort() {
     cbc_style_message "$CATPPUCCIN_GREEN" "Files have been sorted into size-based directories."
   }
 
+  sort_by_kind() {
+    cbc_style_message "$CATPPUCCIN_BLUE" "Sorting files by semantic kind..."
+    local operation_failed=0
+
+    while IFS= read -r path; do
+      [ -f "$path" ] || continue
+      local extension kind target_subdir
+      extension=$(smartsort_detect_extension "$path")
+      kind=$(smartsort_kind_for_extension "$extension")
+      target_subdir="$target_dir/$kind"
+      if ! smartsort_move_file "$path" "$target_subdir"; then
+        operation_failed=1
+      fi
+    done < <(find . -maxdepth 1 -type f -print)
+
+    if [ "$operation_failed" -ne 0 ]; then
+      cbc_style_message "$CATPPUCCIN_RED" "Some files could not be sorted by kind."
+      return 1
+    fi
+
+    cbc_style_message "$CATPPUCCIN_GREEN" "Files have been sorted into kind-based directories."
+  }
+
   local sorting_status=0
   case "$mode" in
   ext) sort_by_extension || sorting_status=1 ;;
   alpha) sort_by_alpha || sorting_status=1 ;;
   time) sort_by_time || sorting_status=1 ;;
   size) sort_by_size || sorting_status=1 ;;
+  kind) sort_by_kind || sorting_status=1 ;;
   esac
 
   if [ "$sorting_status" -ne 0 ]; then
