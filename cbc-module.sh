@@ -213,6 +213,9 @@ smartsort() {
     txt | md | markdown | rst | adoc | rtf | pdf | djvu | doc | docx | odt | xls | xlsx | ods | ppt | pptx | odp | csv | tsv | tex | log)
       printf 'documents'
       ;;
+    mp3 | wav | flac | aac | m4a | ogg | oga | opus | wma | aiff | aif | alac | amr | mid | midi | mka)
+      printf 'audio'
+      ;;
     *)
       printf 'other'
       ;;
