@@ -222,6 +222,9 @@ smartsort() {
     zip | 7z | rar | tar | gz | bz2 | xz | zst | lz | lz4 | tgz | tbz2 | txz | tzst | tar.gz | tar.bz2 | tar.xz | tar.zst | cab | cpio)
       printf 'archives'
       ;;
+    sh | bash | zsh | fish | ps1 | bat | cmd | py | ipynb | js | cjs | mjs | ts | tsx | jsx | java | c | h | cc | cpp | cxx | hpp | cs | go | rs | rb | php | pl | pm | swift | kt | kts | scala | lua | r | jl | sql | html | htm | css | scss | sass | less | json | yaml | yml | toml | ini | conf | cfg)
+      printf 'code'
+      ;;
     *)
       printf 'other'
       ;;
