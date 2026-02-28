@@ -225,6 +225,9 @@ smartsort() {
     sh | bash | zsh | fish | ps1 | bat | cmd | py | ipynb | js | cjs | mjs | ts | tsx | jsx | java | c | h | cc | cpp | cxx | hpp | cs | go | rs | rb | php | pl | pm | swift | kt | kts | scala | lua | r | jl | sql | html | htm | css | scss | sass | less | json | yaml | yml | toml | ini | conf | cfg)
       printf 'code'
       ;;
+    exe | msi | appimage | deb | rpm | pkg | apk | ipa | run | bin)
+      printf 'executables'
+      ;;
     *)
       printf 'other'
       ;;
