@@ -219,6 +219,9 @@ smartsort() {
     mp4 | m4v | mov | mkv | avi | webm | mpg | mpeg | m2ts | mts | ts | 3gp | 3g2 | flv | wmv | ogv)
       printf 'video'
       ;;
+    zip | 7z | rar | tar | gz | bz2 | xz | zst | lz | lz4 | tgz | tbz2 | txz | tzst | tar.gz | tar.bz2 | tar.xz | tar.zst | cab | cpio)
+      printf 'archives'
+      ;;
     *)
       printf 'other'
       ;;
