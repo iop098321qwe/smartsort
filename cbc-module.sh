@@ -2,7 +2,6 @@
 
 smartsort() {
   local mode=""            # Sorting mode (ext, alpha, time, size)
-  local interactive_mode=0 # Flag for interactive refinements
   local target_dir="."     # Destination directory for sorted folders
   local first_letter=""
   local file=""
@@ -35,20 +34,19 @@ smartsort() {
       "    - size  : Group by file size buckets (customisable thresholds)."
 
     cbc_style_box "$CATPPUCCIN_BLUE" "Usage:" \
-      "  smartsort [-h] [-i] [-m mode] [-d directory]" \
+      "  smartsort [-h] [-m mode] [-d directory]" \
       "  smartsort undo"
 
     cbc_style_box "$CATPPUCCIN_TEAL" "Options:" \
       "  -h            Display this help message." \
-      "  -i            Enable interactive prompts for advanced configuration." \
       "  -m mode       Specify the sorting mode directly (ext|alpha|time|size)." \
       "  -d directory  Destination root for sorted folders (defaults to current directory)." \
       "  undo          Undo the most recent sorting run in this directory."
 
     cbc_style_box "$CATPPUCCIN_PEACH" "Examples:" \
-      "  smartsort -i" \
+      "  smartsort" \
       "  smartsort -m ext -d ./sorted" \
-      "  smartsort -i -m size" \
+      "  smartsort -m size" \
       "  smartsort undo"
   }
 
@@ -76,14 +74,6 @@ smartsort() {
     fi
 
     printf '%s' "$selection"
-  }
-
-  smartsort_prompt_target_dir() {
-    local input
-    input=$(cbc_input "Destination directory (blank keeps current): " "$(pwd)/sorted")
-    if [ -n "$input" ]; then
-      target_dir="$input"
-    fi
   }
 
   smartsort_unique_extensions() {
@@ -577,14 +567,11 @@ smartsort() {
     return 1
   }
 
-  while getopts ":hm:id:" opt; do
+  while getopts ":hm:d:" opt; do
     case $opt in
     h)
       usage
       return 0
-      ;;
-    i)
-      interactive_mode=1
       ;;
     m)
       mode="$OPTARG"
@@ -615,8 +602,8 @@ smartsort() {
       return 1
     fi
 
-    if [ "$interactive_mode" -eq 1 ] || [ -n "$mode" ] || [ "$target_dir" != "." ]; then
-      cbc_style_message "$CATPPUCCIN_RED" "The undo command cannot be combined with -i, -m, or -d."
+    if [ -n "$mode" ] || [ "$target_dir" != "." ]; then
+      cbc_style_message "$CATPPUCCIN_RED" "The undo command cannot be combined with -m or -d."
       return 1
     fi
 
@@ -629,24 +616,8 @@ smartsort() {
     return 1
   fi
 
-  if [ "$#" -eq 0 ] && [ "$interactive_mode" -eq 0 ] && [ -z "$mode" ] && [ "$target_dir" = "." ]; then
+  if [ "$#" -eq 0 ] && [ -z "$mode" ] && [ "$target_dir" = "." ]; then
     mode=$(smartsort_select_mode)
-  fi
-
-  if [ "$interactive_mode" -eq 1 ]; then
-    if [ -z "$mode" ]; then
-      mode=$(smartsort_select_mode)
-      if [ -z "$mode" ]; then
-        cbc_style_message "$CATPPUCCIN_RED" "No sorting mode selected. Exiting..."
-        return 1
-      fi
-    else
-      cbc_style_message "$CATPPUCCIN_SUBTEXT" "Interactive refinements enabled for mode: $mode"
-    fi
-
-    if [ "$target_dir" = "." ]; then
-      smartsort_prompt_target_dir
-    fi
   fi
 
   if [ -z "$mode" ]; then
@@ -676,18 +647,18 @@ smartsort() {
     return 0
   fi
 
-  if [ "$mode" = "ext" ] && [ "$interactive_mode" -eq 1 ]; then
+  if [ "$mode" = "ext" ]; then
     if ! smartsort_choose_extensions; then
       cbc_style_message "$CATPPUCCIN_YELLOW" "No files with extensions found for sorting."
       return 0
     fi
   fi
 
-  if [ "$mode" = "time" ] && [ "$interactive_mode" -eq 1 ]; then
+  if [ "$mode" = "time" ]; then
     smartsort_prompt_time_grouping
   fi
 
-  if [ "$mode" = "size" ] && [ "$interactive_mode" -eq 1 ]; then
+  if [ "$mode" = "size" ]; then
     smartsort_prompt_size_thresholds
   fi
 
@@ -712,7 +683,6 @@ smartsort() {
 
   local -a summary_lines=(
     "  Sorting Mode    : $mode"
-    "  Interactive Mode: $([[ "$interactive_mode" -eq 1 ]] && echo Enabled || echo Disabled)"
     "  Target Directory: $absolute_target"
   )
 
