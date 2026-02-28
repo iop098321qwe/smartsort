@@ -234,6 +234,9 @@ smartsort() {
     iso | img | dmg | vhd | vhdx | vmdk | vdi | qcow | qcow2 | ova | ovf | nrg)
       printf 'disk-images'
       ;;
+    epub | mobi | azw | azw3 | fb2 | ibooks | lit | cbz | cbr)
+      printf 'ebooks'
+      ;;
     *)
       printf 'other'
       ;;
