@@ -11,6 +11,15 @@ smartsort() {
   local small_threshold_bytes=1048576   # 1MB default
   local medium_threshold_bytes=10485760 # 10MB default
   local summary_details=""
+  local source_dir=""
+  local run_timestamp=""
+  local move_count=0
+  local absolute_target=""
+  local state_dir=".smartsort"
+  local state_manifest="$state_dir/last-run.moves"
+  local state_meta="$state_dir/last-run.meta"
+  local temp_state_manifest="$state_manifest.tmp"
+  local temp_state_meta="$state_meta.tmp"
   local -a selected_extensions=()
 
   OPTIND=1
@@ -26,18 +35,21 @@ smartsort() {
       "    - type  : Group by MIME type (top-level or full type)."
 
     cbc_style_box "$CATPPUCCIN_BLUE" "Usage:" \
-      "  smartsort [-h] [-i] [-m mode] [-d directory]"
+      "  smartsort [-h] [-i] [-m mode] [-d directory]" \
+      "  smartsort undo"
 
     cbc_style_box "$CATPPUCCIN_TEAL" "Options:" \
       "  -h            Display this help message." \
       "  -i            Enable interactive prompts for advanced configuration." \
       "  -m mode       Specify the sorting mode directly (ext|alpha|time|size|type)." \
-      "  -d directory  Destination root for sorted folders (defaults to current directory)."
+      "  -d directory  Destination root for sorted folders (defaults to current directory)." \
+      "  undo          Undo the most recent sorting run in this directory."
 
     cbc_style_box "$CATPPUCCIN_PEACH" "Examples:" \
       "  smartsort -i" \
       "  smartsort -m type -d ./sorted" \
-      "  smartsort -i -m size"
+      "  smartsort -i -m size" \
+      "  smartsort undo"
   }
 
   smartsort_select_mode() {
@@ -248,6 +260,218 @@ smartsort() {
     esac
   }
 
+  smartsort_read_meta_value() {
+    local key="$1"
+    local meta_file="$2"
+    local line=""
+
+    while IFS= read -r line; do
+      case "$line" in
+      "$key="*)
+        printf '%s' "${line#*=}"
+        return 0
+        ;;
+      esac
+    done < "$meta_file"
+
+    return 1
+  }
+
+  smartsort_discard_temp_state() {
+    rm -f "$temp_state_manifest" "$temp_state_meta"
+  }
+
+  smartsort_prepare_run_state() {
+    source_dir=$(pwd -P)
+    run_timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date +"%Y-%m-%dT%H:%M:%S%z")
+    move_count=0
+
+    if ! mkdir -p "$state_dir"; then
+      cbc_style_message "$CATPPUCCIN_RED" "Failed to create smartsort state directory: $state_dir"
+      return 1
+    fi
+
+    if ! : > "$temp_state_manifest"; then
+      cbc_style_message "$CATPPUCCIN_RED" "Failed to create undo manifest: $temp_state_manifest"
+      return 1
+    fi
+
+    rm -f "$temp_state_meta"
+    return 0
+  }
+
+  smartsort_record_move() {
+    local original_path="$1"
+    local moved_path="$2"
+
+    if ! printf '%s\0%s\0' "$original_path" "$moved_path" >> "$temp_state_manifest"; then
+      cbc_style_message "$CATPPUCCIN_RED" "Failed to write undo manifest entry for: $original_path"
+      return 1
+    fi
+
+    move_count=$((move_count + 1))
+    return 0
+  }
+
+  smartsort_move_file() {
+    local source_path="$1"
+    local destination_dir="$2"
+    local source_name destination_path
+
+    source_name=${source_path##*/}
+    destination_path="$destination_dir/$source_name"
+
+    if ! mkdir -p "$destination_dir"; then
+      cbc_style_message "$CATPPUCCIN_RED" "Failed to create destination directory: $destination_dir"
+      return 1
+    fi
+
+    if ! mv "$source_path" "$destination_dir/"; then
+      cbc_style_message "$CATPPUCCIN_RED" "Failed to move '$source_path' to '$destination_dir/'"
+      return 1
+    fi
+
+    if ! smartsort_record_move "$source_path" "$destination_path"; then
+      cbc_style_message "$CATPPUCCIN_RED" "Failed to record undo data for: $source_path"
+      return 1
+    fi
+
+    return 0
+  }
+
+  smartsort_finalize_run_state() {
+    if ! {
+      printf 'version=1\n'
+      printf 'source_dir=%s\n' "$source_dir"
+      printf 'mode=%s\n' "$mode"
+      printf 'target_dir=%s\n' "$absolute_target"
+      printf 'timestamp=%s\n' "$run_timestamp"
+      printf 'move_count=%s\n' "$move_count"
+    } > "$temp_state_meta"; then
+      cbc_style_message "$CATPPUCCIN_RED" "Failed to write undo metadata."
+      return 1
+    fi
+
+    if ! mv "$temp_state_manifest" "$state_manifest"; then
+      cbc_style_message "$CATPPUCCIN_RED" "Failed to save undo move manifest."
+      return 1
+    fi
+
+    if ! mv "$temp_state_meta" "$state_meta"; then
+      cbc_style_message "$CATPPUCCIN_RED" "Failed to save undo metadata."
+      return 1
+    fi
+
+    return 0
+  }
+
+  smartsort_undo_last_run() {
+    local current_dir recorded_source_dir recorded_mode recorded_target_dir recorded_timestamp recorded_move_count
+    local -a undo_summary=()
+    local -a move_manifest=()
+
+    if [ ! -f "$state_manifest" ] || [ ! -f "$state_meta" ]; then
+      cbc_style_message "$CATPPUCCIN_YELLOW" "No sorting operation is available to undo in this directory."
+      return 0
+    fi
+
+    current_dir=$(pwd -P)
+    recorded_source_dir=$(smartsort_read_meta_value "source_dir" "$state_meta" 2>/dev/null || true)
+    recorded_mode=$(smartsort_read_meta_value "mode" "$state_meta" 2>/dev/null || true)
+    recorded_target_dir=$(smartsort_read_meta_value "target_dir" "$state_meta" 2>/dev/null || true)
+    recorded_timestamp=$(smartsort_read_meta_value "timestamp" "$state_meta" 2>/dev/null || true)
+    recorded_move_count=$(smartsort_read_meta_value "move_count" "$state_meta" 2>/dev/null || true)
+
+    if [ -z "$recorded_source_dir" ]; then
+      cbc_style_message "$CATPPUCCIN_RED" "Undo metadata is invalid. Remove '$state_meta' to reset undo state."
+      return 1
+    fi
+
+    if [ "$current_dir" != "$recorded_source_dir" ]; then
+      cbc_style_message "$CATPPUCCIN_RED" "Undo must be run from: $recorded_source_dir"
+      return 1
+    fi
+
+    undo_summary+=("  Source Directory: $recorded_source_dir")
+    undo_summary+=("  Sorting Mode    : ${recorded_mode:-unknown}")
+    undo_summary+=("  Target Directory: ${recorded_target_dir:-unknown}")
+    undo_summary+=("  Timestamp       : ${recorded_timestamp:-unknown}")
+    undo_summary+=("  Files to Restore: ${recorded_move_count:-unknown}")
+
+    cbc_style_box "$CATPPUCCIN_LAVENDER" "Undo Preview:" "${undo_summary[@]}"
+
+    if ! cbc_confirm "Proceed with undo?"; then
+      cbc_style_message "$CATPPUCCIN_YELLOW" "Undo operation canceled."
+      return 0
+    fi
+
+    if ! mapfile -d '' -t move_manifest < "$state_manifest"; then
+      cbc_style_message "$CATPPUCCIN_RED" "Failed to read undo manifest."
+      return 1
+    fi
+
+    if [ $(( ${#move_manifest[@]} % 2 )) -ne 0 ]; then
+      cbc_style_message "$CATPPUCCIN_RED" "Undo manifest is corrupt. It contains an odd number of path entries."
+      return 1
+    fi
+
+    local restore_failures=0
+    local restore_skips=0
+    local restored_count=0
+    local index original_path moved_path original_parent
+
+    for ((index = ${#move_manifest[@]} - 2; index >= 0; index -= 2)); do
+      original_path="${move_manifest[index]}"
+      moved_path="${move_manifest[index + 1]}"
+
+      if [ ! -e "$moved_path" ]; then
+        cbc_style_message "$CATPPUCCIN_YELLOW" "Skipping missing file: $moved_path"
+        restore_skips=$((restore_skips + 1))
+        restore_failures=1
+        continue
+      fi
+
+      if [ -e "$original_path" ]; then
+        cbc_style_message "$CATPPUCCIN_YELLOW" "Skipping restore because destination already exists: $original_path"
+        restore_skips=$((restore_skips + 1))
+        restore_failures=1
+        continue
+      fi
+
+      original_parent=${original_path%/*}
+      if [ "$original_parent" = "$original_path" ] || [ -z "$original_parent" ]; then
+        original_parent="."
+      fi
+
+      if ! mkdir -p "$original_parent"; then
+        cbc_style_message "$CATPPUCCIN_YELLOW" "Failed to recreate directory: $original_parent"
+        restore_skips=$((restore_skips + 1))
+        restore_failures=1
+        continue
+      fi
+
+      if mv "$moved_path" "$original_path"; then
+        restored_count=$((restored_count + 1))
+      else
+        cbc_style_message "$CATPPUCCIN_YELLOW" "Failed to restore file: $moved_path"
+        restore_skips=$((restore_skips + 1))
+        restore_failures=1
+      fi
+    done
+
+    cbc_style_message "$CATPPUCCIN_GREEN" "Undo restored $restored_count file(s)."
+
+    if [ "$restore_failures" -eq 0 ]; then
+      rm -f "$state_manifest" "$state_meta"
+      cbc_style_message "$CATPPUCCIN_GREEN" "Undo completed successfully."
+      return 0
+    fi
+
+    cbc_style_message "$CATPPUCCIN_YELLOW" "Undo completed with issues. Snapshot kept for retry."
+    cbc_style_message "$CATPPUCCIN_SUBTEXT" "Files skipped: $restore_skips"
+    return 1
+  }
+
   while getopts ":hm:id:" opt; do
     case $opt in
     h)
@@ -278,6 +502,26 @@ smartsort() {
 
   if [ -z "$target_dir" ]; then
     target_dir="."
+  fi
+
+  if [ "${1:-}" = "undo" ]; then
+    if [ "$#" -ne 1 ]; then
+      cbc_style_message "$CATPPUCCIN_RED" "The undo command does not accept additional arguments."
+      return 1
+    fi
+
+    if [ "$interactive_mode" -eq 1 ] || [ -n "$mode" ] || [ "$target_dir" != "." ]; then
+      cbc_style_message "$CATPPUCCIN_RED" "The undo command cannot be combined with -i, -m, or -d."
+      return 1
+    fi
+
+    smartsort_undo_last_run
+    return $?
+  fi
+
+  if [ "$#" -gt 0 ]; then
+    cbc_style_message "$CATPPUCCIN_RED" "Unknown argument: $1"
+    return 1
   fi
 
   if [ "$interactive_mode" -eq 1 ]; then
@@ -315,7 +559,6 @@ smartsort() {
     fi
   fi
 
-  local absolute_target
   absolute_target=$(cd "$target_dir" 2>/dev/null && pwd)
   if [ -z "$absolute_target" ]; then
     absolute_target="$target_dir"
@@ -384,9 +627,14 @@ smartsort() {
     return 0
   fi
 
+  if ! smartsort_prepare_run_state; then
+    return 1
+  fi
+
   sort_by_extension() {
     local include_all=1
     local path=""
+    local operation_failed=0
 
     if [ "${#selected_extensions[@]}" -gt 0 ]; then
       include_all=0
@@ -417,15 +665,22 @@ smartsort() {
       fi
 
       target_subdir="$target_dir/$ext_label"
-      mkdir -p "$target_subdir"
-      mv "$path" "$target_subdir/"
+      if ! smartsort_move_file "$path" "$target_subdir"; then
+        operation_failed=1
+      fi
     done < <(find . -maxdepth 1 -type f -print)
+
+    if [ "$operation_failed" -ne 0 ]; then
+      cbc_style_message "$CATPPUCCIN_RED" "Some files could not be sorted by extension."
+      return 1
+    fi
 
     cbc_style_message "$CATPPUCCIN_GREEN" "Files have been sorted into extension-based directories."
   }
 
   sort_by_alpha() {
     cbc_style_message "$CATPPUCCIN_BLUE" "Sorting files alphabetically by the first letter..."
+    local operation_failed=0
 
     while IFS= read -r path; do
       [ -f "$path" ] || continue
@@ -436,15 +691,22 @@ smartsort() {
         letter="misc"
       fi
       target_subdir="$target_dir/$letter"
-      mkdir -p "$target_subdir"
-      mv "$path" "$target_subdir/"
+      if ! smartsort_move_file "$path" "$target_subdir"; then
+        operation_failed=1
+      fi
     done < <(find . -maxdepth 1 -type f -print)
+
+    if [ "$operation_failed" -ne 0 ]; then
+      cbc_style_message "$CATPPUCCIN_RED" "Some files could not be sorted alphabetically."
+      return 1
+    fi
 
     cbc_style_message "$CATPPUCCIN_GREEN" "Files have been sorted into directories based on their first letter."
   }
 
   sort_by_time() {
     local date_format="%Y-%m"
+    local operation_failed=0
     case "$time_grouping" in
     year) date_format="%Y" ;;
     day) date_format="%Y-%m-%d" ;;
@@ -461,15 +723,22 @@ smartsort() {
         mod_date="unknown"
       fi
       target_subdir="$target_dir/$mod_date"
-      mkdir -p "$target_subdir"
-      mv "$path" "$target_subdir/"
+      if ! smartsort_move_file "$path" "$target_subdir"; then
+        operation_failed=1
+      fi
     done < <(find . -maxdepth 1 -type f -print)
+
+    if [ "$operation_failed" -ne 0 ]; then
+      cbc_style_message "$CATPPUCCIN_RED" "Some files could not be sorted by time."
+      return 1
+    fi
 
     cbc_style_message "$CATPPUCCIN_GREEN" "Files have been sorted into date-based directories."
   }
 
   sort_by_size() {
     cbc_style_message "$CATPPUCCIN_BLUE" "Sorting files by size into categories..."
+    local operation_failed=0
 
     while IFS= read -r path; do
       [ -f "$path" ] || continue
@@ -488,9 +757,15 @@ smartsort() {
       fi
 
       target_subdir="$target_dir/$category"
-      mkdir -p "$target_subdir"
-      mv "$path" "$target_subdir/"
+      if ! smartsort_move_file "$path" "$target_subdir"; then
+        operation_failed=1
+      fi
     done < <(find . -maxdepth 1 -type f -print)
+
+    if [ "$operation_failed" -ne 0 ]; then
+      cbc_style_message "$CATPPUCCIN_RED" "Some files could not be sorted by size."
+      return 1
+    fi
 
     cbc_style_message "$CATPPUCCIN_GREEN" "Files have been sorted into size-based directories."
   }
@@ -502,6 +777,7 @@ smartsort() {
     fi
 
     cbc_style_message "$CATPPUCCIN_BLUE" "Sorting files by MIME type..."
+    local operation_failed=0
 
     while IFS= read -r path; do
       [ -f "$path" ] || continue
@@ -516,22 +792,40 @@ smartsort() {
         category="unknown"
       fi
       target_subdir="$target_dir/$category"
-      mkdir -p "$target_subdir"
-      mv "$path" "$target_subdir/"
+      if ! smartsort_move_file "$path" "$target_subdir"; then
+        operation_failed=1
+      fi
     done < <(find . -maxdepth 1 -type f -print)
+
+    if [ "$operation_failed" -ne 0 ]; then
+      cbc_style_message "$CATPPUCCIN_RED" "Some files could not be sorted by MIME type."
+      return 1
+    fi
 
     cbc_style_message "$CATPPUCCIN_GREEN" "Files have been sorted into MIME type directories."
   }
 
+  local sorting_status=0
   case "$mode" in
-  ext) sort_by_extension || return 1 ;;
-  alpha) sort_by_alpha || return 1 ;;
-  time) sort_by_time || return 1 ;;
-  size) sort_by_size || return 1 ;;
-  type) sort_by_type || return 1 ;;
+  ext) sort_by_extension || sorting_status=1 ;;
+  alpha) sort_by_alpha || sorting_status=1 ;;
+  time) sort_by_time || sorting_status=1 ;;
+  size) sort_by_size || sorting_status=1 ;;
+  type) sort_by_type || sorting_status=1 ;;
   esac
 
-  cbc_style_message "$CATPPUCCIN_GREEN" "Sorting operation completed successfully."
-  cbc_style_message "$CATPPUCCIN_SUBTEXT" "There is no way to undo what you just did. Stay tuned for possible undo in the future."
-}
+  if [ "$sorting_status" -ne 0 ]; then
+    smartsort_discard_temp_state
+    cbc_style_message "$CATPPUCCIN_RED" "Sorting operation finished with errors."
+    return 1
+  fi
 
+  if ! smartsort_finalize_run_state; then
+    smartsort_discard_temp_state
+    cbc_style_message "$CATPPUCCIN_RED" "Sorting completed, but undo data could not be saved."
+    return 1
+  fi
+
+  cbc_style_message "$CATPPUCCIN_GREEN" "Sorting operation completed successfully."
+  cbc_style_message "$CATPPUCCIN_SUBTEXT" "You can revert this run with: smartsort undo"
+}
