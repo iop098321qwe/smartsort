@@ -44,8 +44,8 @@ smartsort() {
 
     cbc_style_box "$CATPPUCCIN_PEACH" "Examples:" \
       "  smartsort" \
-      "  smartsort ext" \
       "  smartsort kind" \
+      "  smartsort ext" \
       "  smartsort time -d ./sorted" \
       "  smartsort undo"
   }
@@ -53,24 +53,24 @@ smartsort() {
   smartsort_select_mode() {
     local selection=""
     if [ "$CBC_HAS_GUM" -eq 1 ]; then
-      if selection=$(gum choose --selected=ext \
+      if selection=$(gum choose --selected=kind \
         --cursor.foreground "$CATPPUCCIN_GREEN" \
         --selected.foreground "$CATPPUCCIN_GREEN" \
-        --header "Select how to organise files" ext alpha time size kind); then
+        --header "Select how to organise files" kind ext alpha time size); then
         :
       else
         selection=""
       fi
     elif command -v fzf >/dev/null 2>&1; then
-      selection=$(printf "ext\nalpha\ntime\nsize\nkind\n" |
+      selection=$(printf "kind\next\nalpha\ntime\nsize\n" |
         fzf --prompt="Select sorting mode: " --header="Choose how to organise files")
     else
-      cbc_style_message "$CATPPUCCIN_SUBTEXT" "Enter sorting mode (ext/alpha/time/size/kind):"
+      cbc_style_message "$CATPPUCCIN_SUBTEXT" "Enter sorting mode (kind/ext/alpha/time/size):"
       read -r selection
     fi
 
     if [ -z "$selection" ]; then
-      selection="ext"
+      selection="kind"
     fi
 
     printf '%s' "$selection"
@@ -695,7 +695,7 @@ smartsort() {
   fi
 
   if [ -z "$mode" ]; then
-    mode="ext"
+    mode="kind"
   fi
 
   case "$mode" in
