@@ -228,6 +228,9 @@ smartsort() {
     exe | msi | appimage | deb | rpm | pkg | apk | ipa | run | bin)
       printf 'executables'
       ;;
+    sqlite | sqlite3 | db | db3 | parquet | avro | orc | feather | arrow | h5 | hdf5 | npy | npz | pkl | joblib | mat | sav | dta)
+      printf 'data'
+      ;;
     *)
       printf 'other'
       ;;
