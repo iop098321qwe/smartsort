@@ -17,8 +17,10 @@ smartsort() {
   local absolute_target=""
   local state_dir=".smartsort"
   local state_manifest="$state_dir/last-run.moves"
+  local state_dirs_manifest="$state_dir/last-run.dirs"
   local state_meta="$state_dir/last-run.meta"
   local temp_state_manifest="$state_manifest.tmp"
+  local temp_state_dirs_manifest="$state_dirs_manifest.tmp"
   local temp_state_meta="$state_meta.tmp"
   local -a selected_extensions=()
 
@@ -278,7 +280,7 @@ smartsort() {
   }
 
   smartsort_discard_temp_state() {
-    rm -f "$temp_state_manifest" "$temp_state_meta"
+    rm -f "$temp_state_manifest" "$temp_state_dirs_manifest" "$temp_state_meta"
   }
 
   smartsort_prepare_run_state() {
@@ -296,7 +298,81 @@ smartsort() {
       return 1
     fi
 
+    if ! : > "$temp_state_dirs_manifest"; then
+      cbc_style_message "$CATPPUCCIN_RED" "Failed to create undo directory manifest: $temp_state_dirs_manifest"
+      return 1
+    fi
+
     rm -f "$temp_state_meta"
+    return 0
+  }
+
+  smartsort_record_created_dir() {
+    local created_dir="$1"
+
+    if [ -z "$created_dir" ]; then
+      return 1
+    fi
+
+    if ! printf '%s\0' "$created_dir" >> "$temp_state_dirs_manifest"; then
+      cbc_style_message "$CATPPUCCIN_RED" "Failed to write undo directory entry for: $created_dir"
+      return 1
+    fi
+
+    return 0
+  }
+
+  smartsort_ensure_directory() {
+    local directory_path="$1"
+    local probe_path parent_path
+    local -a missing_dirs=()
+    local index
+
+    if [ -z "$directory_path" ]; then
+      cbc_style_message "$CATPPUCCIN_RED" "Cannot create an empty directory path."
+      return 1
+    fi
+
+    if [ -d "$directory_path" ]; then
+      return 0
+    fi
+
+    if [ -e "$directory_path" ] && [ ! -d "$directory_path" ]; then
+      cbc_style_message "$CATPPUCCIN_RED" "Path exists but is not a directory: $directory_path"
+      return 1
+    fi
+
+    probe_path="$directory_path"
+    while [ ! -d "$probe_path" ]; do
+      missing_dirs+=("$probe_path")
+      parent_path=${probe_path%/*}
+
+      if [ -z "$parent_path" ]; then
+        if [[ "$probe_path" == /* ]]; then
+          parent_path="/"
+        else
+          parent_path="."
+        fi
+      fi
+
+      if [ "$parent_path" = "$probe_path" ]; then
+        parent_path="."
+      fi
+
+      probe_path="$parent_path"
+    done
+
+    if ! mkdir -p "$directory_path"; then
+      cbc_style_message "$CATPPUCCIN_RED" "Failed to create destination directory: $directory_path"
+      return 1
+    fi
+
+    for ((index = ${#missing_dirs[@]} - 1; index >= 0; index--)); do
+      if ! smartsort_record_created_dir "${missing_dirs[index]}"; then
+        return 1
+      fi
+    done
+
     return 0
   }
 
@@ -321,8 +397,7 @@ smartsort() {
     source_name=${source_path##*/}
     destination_path="$destination_dir/$source_name"
 
-    if ! mkdir -p "$destination_dir"; then
-      cbc_style_message "$CATPPUCCIN_RED" "Failed to create destination directory: $destination_dir"
+    if ! smartsort_ensure_directory "$destination_dir"; then
       return 1
     fi
 
@@ -357,6 +432,11 @@ smartsort() {
       return 1
     fi
 
+    if ! mv "$temp_state_dirs_manifest" "$state_dirs_manifest"; then
+      cbc_style_message "$CATPPUCCIN_RED" "Failed to save undo directory manifest."
+      return 1
+    fi
+
     if ! mv "$temp_state_meta" "$state_meta"; then
       cbc_style_message "$CATPPUCCIN_RED" "Failed to save undo metadata."
       return 1
@@ -369,6 +449,7 @@ smartsort() {
     local current_dir recorded_source_dir recorded_mode recorded_target_dir recorded_timestamp recorded_move_count
     local -a undo_summary=()
     local -a move_manifest=()
+    local -a created_dirs_manifest=()
 
     if [ ! -f "$state_manifest" ] || [ ! -f "$state_meta" ]; then
       cbc_style_message "$CATPPUCCIN_YELLOW" "No sorting operation is available to undo in this directory."
@@ -459,16 +540,56 @@ smartsort() {
       fi
     done
 
-    cbc_style_message "$CATPPUCCIN_GREEN" "Undo restored $restored_count file(s)."
+    local cleanup_failures=0
+    local cleaned_dir_count=0
+    local cleanup_skips=0
+    local cleanup_index cleanup_path
 
-    if [ "$restore_failures" -eq 0 ]; then
-      rm -f "$state_manifest" "$state_meta"
+    if [ -f "$state_dirs_manifest" ]; then
+      if ! mapfile -d '' -t created_dirs_manifest < "$state_dirs_manifest"; then
+        cbc_style_message "$CATPPUCCIN_YELLOW" "Failed to read undo directory manifest."
+        cleanup_failures=1
+      else
+        for ((cleanup_index = ${#created_dirs_manifest[@]} - 1; cleanup_index >= 0; cleanup_index--)); do
+          cleanup_path="${created_dirs_manifest[cleanup_index]}"
+
+          if [ -z "$cleanup_path" ] || [ "$cleanup_path" = "." ] || [ "$cleanup_path" = "/" ]; then
+            continue
+          fi
+
+          if [ ! -e "$cleanup_path" ]; then
+            continue
+          fi
+
+          if [ ! -d "$cleanup_path" ]; then
+            cbc_style_message "$CATPPUCCIN_YELLOW" "Skipping non-directory path during cleanup: $cleanup_path"
+            cleanup_skips=$((cleanup_skips + 1))
+            cleanup_failures=1
+            continue
+          fi
+
+          if rmdir "$cleanup_path"; then
+            cleaned_dir_count=$((cleaned_dir_count + 1))
+          else
+            cleanup_skips=$((cleanup_skips + 1))
+            cleanup_failures=1
+          fi
+        done
+      fi
+    fi
+
+    cbc_style_message "$CATPPUCCIN_GREEN" "Undo restored $restored_count file(s)."
+    cbc_style_message "$CATPPUCCIN_GREEN" "Undo removed $cleaned_dir_count directory(s)."
+
+    if [ "$restore_failures" -eq 0 ] && [ "$cleanup_failures" -eq 0 ]; then
+      rm -f "$state_manifest" "$state_dirs_manifest" "$state_meta"
       cbc_style_message "$CATPPUCCIN_GREEN" "Undo completed successfully."
       return 0
     fi
 
     cbc_style_message "$CATPPUCCIN_YELLOW" "Undo completed with issues. Snapshot kept for retry."
     cbc_style_message "$CATPPUCCIN_SUBTEXT" "Files skipped: $restore_skips"
+    cbc_style_message "$CATPPUCCIN_SUBTEXT" "Directories skipped: $cleanup_skips"
     return 1
   }
 
@@ -552,11 +673,9 @@ smartsort() {
     ;;
   esac
 
-  if [ "$target_dir" != "." ]; then
-    if ! mkdir -p "$target_dir"; then
-      cbc_style_message "$CATPPUCCIN_RED" "Failed to create destination directory: $target_dir"
-      return 1
-    fi
+  if [ "$target_dir" != "." ] && [ -e "$target_dir" ] && [ ! -d "$target_dir" ]; then
+    cbc_style_message "$CATPPUCCIN_RED" "Path exists but is not a directory: $target_dir"
+    return 1
   fi
 
   absolute_target=$(cd "$target_dir" 2>/dev/null && pwd)
@@ -629,6 +748,18 @@ smartsort() {
 
   if ! smartsort_prepare_run_state; then
     return 1
+  fi
+
+  if [ "$target_dir" != "." ]; then
+    if ! smartsort_ensure_directory "$target_dir"; then
+      smartsort_discard_temp_state
+      return 1
+    fi
+  fi
+
+  absolute_target=$(cd "$target_dir" 2>/dev/null && pwd)
+  if [ -z "$absolute_target" ]; then
+    absolute_target="$target_dir"
   fi
 
   sort_by_extension() {
