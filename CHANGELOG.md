@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.1.1](https://github.com/iop098321qwe/smartsort/compare/v0.1.0...v0.1.1) (2026-02-28)
+
+
+### Features
+
+* **undo:** increase default history depth to 10 ([2cdc972](https://github.com/iop098321qwe/smartsort/commit/2cdc9720a8e9e65d6f3e9b6fa12453bdbafdcc68))
+* **undo:** store snapshots in XDG state with 3-level history ([80a6be6](https://github.com/iop098321qwe/smartsort/commit/80a6be6e21b98ab677e04f5533f0409bf2d4e4bc))
+
 ## [0.1.0](https://github.com/iop098321qwe/smartsort/compare/v0.0.2...v0.1.0) (2026-02-28)
 
 
