@@ -207,6 +207,9 @@ smartsort() {
     local extension="$1"
 
     case "$extension" in
+    jpg | jpeg | jpe | png | gif | webp | avif | heic | heif | bmp | tif | tiff | svg | ico | icns | psd | xcf | dng | cr2 | cr3 | nef | arw | raf | orf | rw2)
+      printf 'images'
+      ;;
     txt | md | markdown | rst | adoc | rtf | pdf | djvu | doc | docx | odt | xls | xlsx | ods | ppt | pptx | odp | csv | tsv | tex | log)
       printf 'documents'
       ;;
@@ -724,7 +727,7 @@ smartsort() {
     summary_details="Size buckets (MB): small≤$((small_threshold_bytes / 1024 / 1024)), medium≤$((medium_threshold_bytes / 1024 / 1024)), large>medium"
     ;;
   kind)
-    summary_details="Kind buckets: documents + other"
+    summary_details="Kind buckets: mapped categories + other"
     ;;
   *)
     summary_details=""
