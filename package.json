@@ -1,0 +1,26 @@
+{
+  "name": "smartsort",
+  "version": "0.1.1",
+  "description": "Organize files in a directory using flexible sorting modes. Supports undo history, extensions, time, size, and semantic kinds.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/iop098321qwe/smartsort.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/iop098321qwe/smartsort/issues"
+  },
+  "homepage": "https://github.com/iop098321qwe/smartsort#readme",
+  "devDependencies": {
+    "@commitlint/cli": "^21.0.2",
+    "@commitlint/config-conventional": "^21.0.2",
+    "husky": "^9.1.7"
+  }
+}
